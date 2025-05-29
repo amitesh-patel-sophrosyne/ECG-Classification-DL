@@ -10,8 +10,10 @@ class Preprocess:
         self.target_fs = target_fs
 
     def downsample(self, signal):
-        num_samples = int(signal.shape[0] * self.target_fs / self.fs)
-        return resample(signal, num_samples, axis=0)
+        if self.fs != self.target_fs:
+            num_samples = int(signal.shape[0] * self.target_fs / self.fs)
+            return resample(signal, num_samples, axis=0)
+        return signal
 
     def z_score_normalize(self, signal):
         mean = np.mean(signal, axis=0)

@@ -64,3 +64,5 @@ Thumbs.db
 # Files 
 test.ipynb
 data
+model_files
+wandb   
