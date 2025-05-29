@@ -66,3 +66,4 @@ test.ipynb
 data
 model_files
 wandb   
+runs
