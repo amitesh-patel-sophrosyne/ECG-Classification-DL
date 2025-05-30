@@ -12,6 +12,7 @@ from collections import Counter
 from datetime import datetime
 
 import wandb
+from sklearn.metrics import precision_score, recall_score, f1_score
 
 from src.models.resnet1d import resnet50_1d
 from src.processing.data_extract import Preprocess, create_dataset_from_paths
@@ -20,15 +21,12 @@ from src.processing.pytorch_dataloader import ECGDataset
 
 # ---------------- TRAINING FUNCTIONS ----------------
 
-
 def get_model_path(config, base_dir="model_files"):
     from datetime import datetime
 
-    # Folder for the model name
     model_folder = os.path.join(base_dir, config.model)
     os.makedirs(model_folder, exist_ok=True)
 
-    # Filename includes config details
     dataset_name = os.path.basename(config.data_dir.rstrip("/"))
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     filename = (
@@ -70,9 +68,25 @@ def prepare_dataloaders(data_dir, fs, batch_size, seed):
 
     return train_loader, val_loader, test_loader
 
+def model_fn(model_name):
+    if model_name == "resnet18_1d":
+        from src.models.resnet1d import resnet18_1d
+        return resnet18_1d
+    elif model_name == "resnet34_1d":
+        from src.models.resnet1d import resnet34_1d
+        return resnet34_1d
+    elif model_name == "resnet50_1d":
+        from src.models.resnet1d import resnet50_1d
+        return resnet50_1d
+    elif model_name == "resnet152_1d":
+        from src.models.resnet1d import resnet152_1d
+        return resnet152_1d
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
+
 
 def train_model(config):
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
     wandb.init(project="ecg-afib-detection", config=config)
     config = wandb.config
@@ -81,7 +95,8 @@ def train_model(config):
         config.data_dir, config.fs, config.batch_size, config.seed
     )
 
-    model = resnet50_1d(in_channels=2, num_classes=2).to(device)
+    resnet_model = model_fn(config.model)
+    model = resnet_model(in_channels=2, num_classes=2).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = SGD(model.parameters(), lr=config.learning_rate, momentum=0.9, weight_decay=1e-4)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3) # this patientce is for the scheduler, not early stopping
@@ -111,17 +126,30 @@ def train_model(config):
         train_acc = correct / len(train_loader.dataset)
 
         model.eval()
+        best_val_f1 = 0
         val_loss, correct = 0, 0
+        all_preds, all_labels = [], []
+
         with torch.no_grad():
             for x, y in val_loader:
                 x, y = x.to(device), y.to(device)
                 output = model(x)
                 loss = criterion(output, y)
+
                 val_loss += loss.item() * x.size(0)
-                correct += (output.argmax(1) == y).sum().item()
+                preds = output.argmax(dim=1)
+
+                all_preds.extend(preds.cpu().numpy())
+                all_labels.extend(y.cpu().numpy())
+                correct += (preds == y).sum().item()
 
         val_loss /= len(val_loader.dataset)
         val_acc = correct / len(val_loader.dataset)
+
+        val_precision = precision_score(all_labels, all_preds, average="weighted", zero_division=0)
+        val_recall = recall_score(all_labels, all_preds, average="weighted", zero_division=0)
+        val_f1 = f1_score(all_labels, all_preds, average="weighted", zero_division=0)
+
         scheduler.step(val_loss)
 
         wandb.log({
@@ -130,24 +158,29 @@ def train_model(config):
             "train_acc": train_acc,
             "val_loss": val_loss,
             "val_acc": val_acc,
+            "val_precision": val_precision,
+            "val_recall": val_recall,
+            "val_f1": val_f1,
             "lr": optimizer.param_groups[0]['lr']
         })
 
         print(f"[Epoch {epoch + 1:02d}] Train Loss: {train_loss:.4f}, Acc: {train_acc:.4f} | "
-              f"Val Loss: {val_loss:.4f}, Acc: {val_acc:.4f}")
+              f"Val Loss: {val_loss:.4f}, Acc: {val_acc:.4f} | "
+              f"Precision: {val_precision:.4f}, Recall: {val_recall:.4f}, F1: {val_f1:.4f}")
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if val_f1 > best_val_f1:
+            best_val_f1 = val_f1
             patience_counter = 0
             model_path = get_model_path(config)
             torch.save(model.state_dict(), model_path)
-            print(f"Saved best model to {model_path}")
-            wandb.run.summary["best_val_loss"] = best_val_loss
+            print(f"Saved best model to {model_path} (F1: {val_f1:.4f})")
+            wandb.run.summary["best_val_f1"] = best_val_f1
         else:
             patience_counter += 1
             if patience_counter >= config.patience:
                 print("Early stopping triggered.")
                 break
+
 
     wandb.finish()
 
@@ -159,6 +192,11 @@ if __name__ == "__main__":
 
     parser.add_argument("--data_dir", type=str, required=True, help="Path to ECG dataset directory")
     parser.add_argument("--epochs", type=int, default=20, help="Number of training epochs")
+    parser.add_argument("--model",
+                        type=str, 
+                        default="resnet50_1d",
+                        choices=["resnet18_1d", "resnet34_1d", "resnet50_1d", "resnet152_1d"],
+                        help="Model architecture to use")
     parser.add_argument("--fs", type=int, default=250, help="Original sampling frequency")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
@@ -175,9 +213,10 @@ if __name__ == "__main__":
         "learning_rate": args.learning_rate,
         "patience": args.patience,
         "seed": args.seed,
-        "model": "resnet50_1d",
+        "model": args.model,
         "optimizer": "SGD",
         "scheduler": "ReduceLROnPlateau"
     }
+
 
     train_model(CONFIG)
