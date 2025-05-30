@@ -13,7 +13,6 @@ import wfdb
 import pandas as pd
 from sklearn.utils import shuffle
 
-from src.models.resnet1d import resnet50_1d
 from src.processing.data_extract import Preprocess, create_dataset_from_paths
 from src.processing.pytorch_dataloader import ECGDataset
 
@@ -23,8 +22,25 @@ DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
 # ---------------- FUNCTIONS ----------------
 
-def load_model(model_path: str, device: torch.device):
-    model = resnet50_1d(in_channels=2, num_classes=2).to(device)
+def model_fn(model_name):
+    if model_name == "resnet18_1d":
+        from src.models.resnet1d import resnet18_1d
+        return resnet18_1d
+    elif model_name == "resnet34_1d":
+        from src.models.resnet1d import resnet34_1d
+        return resnet34_1d
+    elif model_name == "resnet50_1d":
+        from src.models.resnet1d import resnet50_1d
+        return resnet50_1d
+    elif model_name == "resnet152_1d":
+        from src.models.resnet1d import resnet152_1d
+        return resnet152_1d
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
+
+def load_model(model_name: str, model_path: str, device: torch.device):
+    resnet_model = model_fn(model_name)
+    model = resnet_model(in_channels=2, num_classes=2).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     return model
@@ -64,22 +80,15 @@ def print_metrics(y_true, y_pred):
     print(confusion_matrix(y_true, y_pred))
 
 def save_run_outputs(y_true, y_pred, args, save_dir="runs"):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    model_name = os.path.splitext(os.path.basename(args.model_path))[0]
-    data_name = os.path.basename(os.path.normpath(args.data_dir))
-    
-    run_name = (
-        f"{data_name}_fs{args.fs}_split{int(args.split*100)}pct_"
-        f"{model_name}_{timestamp}"
-    )
-
-    run_path = os.path.join(save_dir, run_name)
+    dataset_name = os.path.basename(args.data_dir.rstrip("/"))
+    run_path = os.path.join(save_dir, dataset_name, args.model,
+                            f"fs{args.fs}_split{args.split}_batch{args.batch_size}")
     os.makedirs(run_path, exist_ok=True)
 
     report = classification_report(y_true, y_pred, digits=4, output_dict=True)
     with open(os.path.join(run_path, "classification_report.txt"), "w") as f:
-        f.write(report)
+        f.write(json.dumps(report, indent=4))
 
     cm = confusion_matrix(y_true, y_pred)
     np.savetxt(os.path.join(run_path, "confusion_matrix.txt"), cm, fmt='%d')
@@ -199,7 +208,7 @@ def run_evaluation(args):
     test_ds = ECGDataset(X_test, y_test)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size)
 
-    model = load_model(args.model_path, DEVICE)
+    model = load_model(args.model, args.model_path, DEVICE)
     y_true, y_pred = evaluate(model, test_loader, DEVICE)
 
     print_metrics(y_true, y_pred)
@@ -211,6 +220,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate ResNet1D ECG model on dataset")
 
     parser.add_argument("--data_dir", type=str, required=True, help="Path to directory containing ECG data")
+    parser.add_argument("--model", type=str, default="resnet50_1d",
+                        choices=['resnet18_1d', 'resnet34_1d', 'resnet50_1d', 'resnet150_1d'], help="Model architecture to use (e.g. resnet50_1d)")
     parser.add_argument("--model_path", type=str, required=True, help="Path to saved model file (e.g. best_model.pt)")
     parser.add_argument("--fs", type=int, default=250, help="Original sampling frequency of data")
     parser.add_argument("--split", type=float, default=0.2, help="Fraction of data to use as test set (0 = use all)")
