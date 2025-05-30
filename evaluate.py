@@ -9,6 +9,9 @@ from sklearn.metrics import classification_report, confusion_matrix
 from collections import Counter
 from datetime import datetime
 from tqdm import tqdm
+import wfdb
+import pandas as pd
+from sklearn.utils import shuffle
 
 from src.models.resnet1d import resnet50_1d
 from src.processing.data_extract import Preprocess, create_dataset_from_paths
@@ -85,6 +88,105 @@ def save_run_outputs(y_true, y_pred, args, save_dir="runs"):
         json.dump(vars(args), f, indent=4)
 
     print(f"\nSaved evaluation results to: {run_path}")
+
+def load_large_scale_data(large_scale_df, directory, preprocess, fs=500):
+
+    SEED = 42 
+
+    # --- filter the AFib records from the large scale dataset ---
+    def check_afib(row):
+        # afib - SNOMED code: 164889003
+        return '164889003' in row['labels']
+
+    # --- take normal records also ---
+    def check_normal(row):
+        # normal - SNOMED code: 426783006
+        return '426783006' in row['labels']
+
+    afib_df = large_scale_df[large_scale_df.apply(check_afib, axis=1)]
+    print(f"Found {len(afib_df)} AFib records in large scale dataset")
+
+    normal_df = large_scale_df[large_scale_df.apply(check_normal, axis=1)]
+    print(f"Found {len(normal_df)} Normal records in large scale dataset")
+
+    # --- Take a subset of normal records to balance the dataset ---
+    normal_df = normal_df.sample(n=len(afib_df), random_state=SEED)
+    large_scale_subset_df = pd.concat([afib_df, normal_df])
+    large_scale_subset_df = large_scale_subset_df.reset_index(drop=True)
+    print(f"Total records in large scale dataset: {len(large_scale_subset_df)}")
+
+    # --- Extract both the signal and the labels ---
+    X = []
+    y = []
+
+    for _, row in large_scale_subset_df.iterrows():
+        full_path = os.path.join(directory, row['path'])
+        
+        try:
+            record = wfdb.rdsamp(full_path)
+        except Exception as e:
+            print(f"Error reading {row['path']}: {e}")
+            continue
+
+        signals = record[0]
+        metadata = record[1]
+
+        # --- Get index for leads 'II' and 'V1' ---
+        try:
+            sig_names = metadata['sig_name']
+            ii_index = sig_names.index('II')
+            v1_index = sig_names.index('V1')
+            leads = signals[:, [ii_index, v1_index]]
+        except Exception as e:
+            print(f"Skipping {row['path']} due to missing leads: {e}")
+            continue
+
+        if len(leads.shape) == 1:
+            leads = leads.reshape(-1, 1)
+
+        # --- Preprocess the signal ---
+        processed_signal = preprocess.process(leads, fs=fs)
+        if processed_signal is None:
+            print(f"Skipping record {row['path']} due to preprocessing error. Signal shape: {leads.shape}")
+            continue
+
+        X.append(processed_signal)
+
+        # --- Convert labels to binary (0 for normal, 1 for AFib) ---
+        labels = row['labels']
+        if '164889003' in labels:
+            y.append(1)
+        elif '426783006' in labels:
+            y.append(0)
+        else:
+            print(f"Skipping record {row['path']} due to unknown label: {labels}")
+            continue
+
+    X = np.array(X)
+    y = np.array(y)
+
+    # --- Shuffle the dataset to avoid ordered bias ---
+    X, y = shuffle(X, y, random_state=SEED)
+
+    print(f"Loaded {len(X)} records from large scale dataset")
+
+    return X, y
+
+
+def large_scale_data_evaluation(large_scale_df, large_scale_directory, model_path, fs=250, split=0.2, batch_size=32):
+
+    preprocess = Preprocess(500,128)
+    X_test, y_test = load_large_scale_data(large_scale_df, large_scale_directory, preprocess)
+    print(f"Test set size: {len(X_test)}, Class distribution: {Counter(y_test)}")
+
+    test_ds = ECGDataset(X_test, y_test)
+    test_loader = DataLoader(test_ds, batch_size=batch_size)
+
+    model = load_model(model_path, DEVICE)
+    y_true, y_pred = evaluate(model, test_loader, DEVICE)
+
+    print_metrics(y_true, y_pred)
+    save_run_outputs(y_true, y_pred, args)
 
 
 def run_evaluation(args):

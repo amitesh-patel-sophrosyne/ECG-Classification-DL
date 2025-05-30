@@ -5,4 +5,5 @@ pytorch
 torchvision
 tqdm
 wandb
+wfdb
 

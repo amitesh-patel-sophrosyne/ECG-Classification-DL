@@ -22,18 +22,11 @@ from src.processing.pytorch_dataloader import ECGDataset
 # ---------------- TRAINING FUNCTIONS ----------------
 
 def get_model_path(config, base_dir="model_files"):
-    from datetime import datetime
-
-    model_folder = os.path.join(base_dir, config.model)
-    os.makedirs(model_folder, exist_ok=True)
-
     dataset_name = os.path.basename(config.data_dir.rstrip("/"))
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = (
-        f"{dataset_name}_fs{config.fs}_bs{config.batch_size}_"
-        f"lr{config.learning_rate}_ep{config.epochs}_{timestamp}.pt"
-    )
-    model_path = os.path.join(model_folder, filename)
+    model_folder = os.path.join(base_dir, dataset_name, config.model,
+                            f"fs{config.fs}_bs{config.batch_size}_lr{config.learning_rate}_ep{config.epochs}")
+    os.makedirs(model_folder, exist_ok=True)
+    model_path = os.path.join(model_folder, "best_model.pt")
     return model_path
 
 
