@@ -45,7 +45,7 @@ def load_model(model_name: str, model_path: str, device: torch.device):
     model.eval()
     return model
 
-def prepare_test_data(data_dir: str, preprocessor, test_split=None, seed=42):
+def prepare_test_data(data_dir: str, preprocessor, test_split=None, seed=42, data_used='afdb'):
     paths = [os.path.join(data_dir, f[:-4]) for f in os.listdir(data_dir) if f.endswith('.atr')]
     np.random.seed(seed)
     np.random.shuffle(paths)
@@ -58,7 +58,8 @@ def prepare_test_data(data_dir: str, preprocessor, test_split=None, seed=42):
 
     print(f"Test data paths: {test_paths}")
     print(f"Test set size: {len(test_paths)}")
-    X_test, y_test = create_dataset_from_paths(test_paths, preprocessor)
+    X_test, y_test = create_dataset_from_paths(test_paths, preprocessor, data_used)
+    print(f"Test set size: {len(X_test)}, Class distribution: {Counter(y_test)}")
     return X_test, y_test
 
 def evaluate(model, data_loader, device):
@@ -202,7 +203,7 @@ def run_evaluation(args):
     print(f"\nEvaluating on dataset: {args.data_dir}")
 
     preprocessor = Preprocess(fs=args.fs, target_fs=128)
-    X_test, y_test = prepare_test_data(args.data_dir, preprocessor, test_split=args.split, seed=SEED)
+    X_test, y_test = prepare_test_data(args.data_dir, preprocessor, test_split=args.split, seed=SEED, data_used=args.data_used)
     print(f"Test set size: {len(X_test)}, Class distribution: {Counter(y_test)}")
 
     test_ds = ECGDataset(X_test, y_test)
@@ -222,6 +223,8 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, required=True, help="Path to directory containing ECG data")
     parser.add_argument("--model", type=str, default="resnet50_1d",
                         choices=['resnet18_1d', 'resnet34_1d', 'resnet50_1d', 'resnet150_1d'], help="Model architecture to use (e.g. resnet50_1d)")
+    parser.add_argument("--data_used", type=str, default="afdb",
+                        choices=['afdb', 'ltafdb', 'large_scale'], help="Dataset type to use (e.g. afdb, ltafdb, large_scale)")
     parser.add_argument("--model_path", type=str, required=True, help="Path to saved model file (e.g. best_model.pt)")
     parser.add_argument("--fs", type=int, default=250, help="Original sampling frequency of data")
     parser.add_argument("--split", type=float, default=0.2, help="Fraction of data to use as test set (0 = use all)")

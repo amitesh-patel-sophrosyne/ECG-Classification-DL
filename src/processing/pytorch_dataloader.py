@@ -42,10 +42,7 @@ class ECGDataset(Dataset):
 if __name__ == "__main__":
 
     # X, y = np.random.rand(100, 2, 1280), np.random.randint(0, 2, size=100) 
-    output_dir = 'data/afdb_data'
-    preprocessor = Preprocess(fs=250, target_fs=128)
 
-    X, y = create_dataset_from_paths(output_dir, preprocess=preprocessor)
     # transform = AddGaussianNoise(std=0.02)
 
     dataset = ECGDataset(signals=X, labels=y, transform=None) # in the paper it is none 

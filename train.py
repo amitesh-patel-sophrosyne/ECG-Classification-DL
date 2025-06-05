@@ -30,7 +30,7 @@ def get_model_path(config, base_dir="model_files"):
     return model_path
 
 
-def prepare_dataloaders(data_dir, fs, batch_size, seed):
+def prepare_dataloaders(data_dir, fs, batch_size, seed, data_used):
     paths = [os.path.join(data_dir, f[:-4]) for f in os.listdir(data_dir) if f.endswith('.atr')]
     np.random.seed(seed)
     np.random.shuffle(paths)
@@ -41,11 +41,11 @@ def prepare_dataloaders(data_dir, fs, batch_size, seed):
     preprocessor = Preprocess(fs=fs, target_fs=128)
 
     print("Creating training set...")
-    X_train, y_train = create_dataset_from_paths(train_paths, preprocessor)
+    X_train, y_train = create_dataset_from_paths(train_paths, preprocessor, data_used)
     print("Creating validation set...")
-    X_val, y_val = create_dataset_from_paths(val_paths, preprocessor)
+    X_val, y_val = create_dataset_from_paths(val_paths, preprocessor, data_used)
     print("Creating test set...")
-    X_test, y_test = create_dataset_from_paths(test_paths, preprocessor)
+    X_test, y_test = create_dataset_from_paths(test_paths, preprocessor, data_used)
 
     print(f"Training set size: {len(X_train)}, Class distribution: {Counter(y_train)}")
     print(f"Validation set size: {len(X_val)}, Class distribution: {Counter(y_val)}")
@@ -85,7 +85,7 @@ def train_model(config):
     config = wandb.config
 
     train_loader, val_loader, _ = prepare_dataloaders(
-        config.data_dir, config.fs, config.batch_size, config.seed
+        config.data_dir, config.fs, config.batch_size, config.seed, config.data_used
     )
 
     resnet_model = model_fn(config.model)
@@ -190,6 +190,8 @@ if __name__ == "__main__":
                         default="resnet50_1d",
                         choices=["resnet18_1d", "resnet34_1d", "resnet50_1d", "resnet152_1d"],
                         help="Model architecture to use")
+    parser.add_argument("--data_used", type=str, default="afdb", choices=["afdb", "ltafdb"],
+                        help="Dataset type to use (afdb or ltafdb)")
     parser.add_argument("--fs", type=int, default=250, help="Original sampling frequency")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
@@ -201,6 +203,7 @@ if __name__ == "__main__":
     CONFIG = {
         "data_dir": args.data_dir,
         "epochs": args.epochs,
+        "data_used": args.data_used,
         "fs": args.fs,
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,

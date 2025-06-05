@@ -41,10 +41,13 @@ class SegmentExtractor:
     def __init__(self, segment_duration_sec=10, target_fs=128):
         self.segment_samples = segment_duration_sec * target_fs
 
-    def convert_intervals(self, afib_intervals, ratio):
+    def convert_intervals_afdb(self, afib_intervals, ratio):
         return [(int(start * ratio), int(end * ratio)) for start, end in afib_intervals]
+    
+    def convert_intervals_ltafdb(self, labeled_intervals, ratio):
+        return [(int(start * ratio), int(end * ratio), label) for start, end, label in labeled_intervals]
 
-    def extract_segments(self, signal, afib_intervals, target_fs):
+    def extract_segments_afdb(self, signal, afib_intervals, target_fs):
         segments = []
         labels = []
 
@@ -73,9 +76,29 @@ class SegmentExtractor:
                 labels.append(label)
 
         return segments, labels
+    
+    def extract_segments_ltafdb(self, signal, labeled_intervals, target_fs):
+        segments = []
+        labels = []
+
+        for start, end, label in labeled_intervals:
+            interval_len = end - start
+            num_full_segments = interval_len // self.segment_samples
+
+            for i in range(num_full_segments):
+                seg_start = start + i * self.segment_samples
+                seg_end = seg_start + self.segment_samples
+                segment = signal[seg_start:seg_end].T  # shape: (2, segment_samples)
+                segments.append(segment)
+                labels.append(label)
+
+        return segments, labels
 
 
 def parse_afib_intervals(annotation, signal_length):
+    """
+    Parses AFIB intervals from the annotation for the AFDB dataset.
+    They mentioned in the paper that they only take AFIB intervals, and rest of the intervals are Non-AF."""
     samples = annotation.sample
     aux_notes = annotation.aux_note
 
@@ -95,8 +118,45 @@ def parse_afib_intervals(annotation, signal_length):
 
     return afib_intervals
 
+def parse_afib_and_normal_intervals(annotation, signal_length):
+    """
+    Parses AFIB and Normal intervals from the annotation for the LTAFDB dataset.
+    As mentioned in the paper, to take only AFIB and Normal intervals,
+    """
+    samples = annotation.sample
+    aux_notes = annotation.aux_note
 
-def create_dataset_from_paths(record_paths, preprocess):
+    intervals = []
+    current_start = None
+    current_label = None
+
+    for i, note in enumerate(aux_notes):
+        if note == '(AFIB':
+            if current_start is not None:
+                intervals.append((current_start, samples[i], current_label))
+            current_start = samples[i]
+            current_label = 1
+        elif note == '(N':
+            if current_start is not None:
+                intervals.append((current_start, samples[i], current_label))
+            current_start = samples[i]
+            current_label = 0
+        elif note.startswith('(') and current_start is not None:
+            # Any new rhythm starting -> end current interval
+            intervals.append((current_start, samples[i], current_label))
+            current_start = None
+            current_label = None
+
+    # If signal ends with an open interval
+    if current_start is not None:
+        intervals.append((current_start, signal_length, current_label))
+
+    # Return only AFIB and Normal intervals
+    return [(start, end, label) for start, end, label in intervals if label in (0, 1)]
+
+
+
+def create_dataset_from_paths(record_paths, preprocess, data_used='afdb'):
     extractor = SegmentExtractor(segment_duration_sec=10, target_fs=preprocess.target_fs)
     all_segments = []
     all_labels = []
@@ -112,18 +172,39 @@ def create_dataset_from_paths(record_paths, preprocess):
         annotation = wfdb.rdann(record_base, 'atr')
 
         signal = record.p_signal[:, :2]  # Take both channels
-        afib_intervals = parse_afib_intervals(annotation, len(signal))
-
+        if data_used == 'afdb':
+            # For AFDB, parse AFIB intervals
+            print(f"Processing AFDB record: {record_base}")
+            afib_intervals = parse_afib_intervals(annotation, len(signal))
+        elif data_used == 'ltafdb':
+            # For LTAFDB, parse AFIB and Normal intervals
+            print(f"Processing LTAFDB record: {record_base}")
+            afib_intervals = parse_afib_and_normal_intervals(annotation, len(signal))
+        else:
+            raise ValueError(f"Unknown dataset type: {data_used}")
+        
         # Preprocess signal first (downsample and normalize)
         processed_signal = preprocess.process(signal)
 
         # Convert AFib intervals to new sample scale
         ratio = preprocess.target_fs / preprocess.fs
-        afib_intervals_ds = extractor.convert_intervals(afib_intervals, ratio)
+        if data_used == 'afdb':
+            afib_intervals_ds = extractor.convert_intervals_afdb(afib_intervals, ratio)
+        elif data_used == 'ltafdb':
+            afib_intervals_ds = extractor.convert_intervals_ltafdb(afib_intervals, ratio)
+        else:
+            raise ValueError(f"Unknown dataset type: {data_used}")
 
-        segments, labels = extractor.extract_segments(
-            processed_signal, afib_intervals_ds, preprocess.target_fs
-        )
+        if data_used == 'afdb':
+            segments, labels = extractor.extract_segments_afdb(
+                processed_signal, afib_intervals_ds, preprocess.target_fs
+            )
+        elif data_used == 'ltafdb':
+            segments, labels = extractor.extract_segments_ltafdb(
+                processed_signal, afib_intervals_ds, preprocess.target_fs
+            )
+        else:
+            raise ValueError(f"Unknown dataset type: {data_used}")
 
         all_segments.extend(segments)
         all_labels.extend(labels)
