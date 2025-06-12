@@ -224,7 +224,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="resnet50_1d",
                         choices=['resnet18_1d', 'resnet34_1d', 'resnet50_1d', 'resnet150_1d'], help="Model architecture to use (e.g. resnet50_1d)")
     parser.add_argument("--data_used", type=str, default="afdb",
-                        choices=['afdb', 'ltafdb', 'large_scale'], help="Dataset type to use (e.g. afdb, ltafdb, large_scale)")
+                        choices=['afdb', 'ltafdb', 'large_scale', 'mitdb'], help="Dataset type to use (e.g. afdb, ltafdb, large_scale)")
     parser.add_argument("--model_path", type=str, required=True, help="Path to saved model file (e.g. best_model.pt)")
     parser.add_argument("--fs", type=int, default=250, help="Original sampling frequency of data")
     parser.add_argument("--split", type=float, default=0.2, help="Fraction of data to use as test set (0 = use all)")

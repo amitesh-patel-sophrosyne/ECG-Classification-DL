@@ -2,6 +2,7 @@ import os
 import numpy as np
 import wfdb
 from scipy.signal import resample
+import re
 
 
 class Preprocess:
@@ -118,11 +119,14 @@ def parse_afib_intervals(annotation, signal_length):
 
     return afib_intervals
 
-def parse_afib_and_normal_intervals(annotation, signal_length):
+def parse_afib_and_normal_intervals(annotation, signal_length, data_used):
     """
     Parses AFIB and Normal intervals from the annotation for the LTAFDB dataset.
     As mentioned in the paper, to take only AFIB and Normal intervals,
     """
+    def clean_note(note):
+        return re.sub(r'[\x00-\x1F\x7F]', '', note)
+    
     samples = annotation.sample
     aux_notes = annotation.aux_note
 
@@ -131,6 +135,9 @@ def parse_afib_and_normal_intervals(annotation, signal_length):
     current_label = None
 
     for i, note in enumerate(aux_notes):
+        if data_used != 'ltafdb':
+            note = clean_note(note)  # Clean the note from any control characters
+
         if note == '(AFIB':
             if current_start is not None:
                 intervals.append((current_start, samples[i], current_label))
@@ -174,12 +181,12 @@ def create_dataset_from_paths(record_paths, preprocess, data_used='afdb'):
         signal = record.p_signal[:, :2]  # Take both channels
         if data_used == 'afdb':
             # For AFDB, parse AFIB intervals
-            print(f"Processing AFDB record: {record_base}")
+            print(f"Processing {data_used} record: {record_base}")
             afib_intervals = parse_afib_intervals(annotation, len(signal))
-        elif data_used == 'ltafdb':
+        elif (data_used == 'ltafdb' or data_used == 'mitdb'):
             # For LTAFDB, parse AFIB and Normal intervals
-            print(f"Processing LTAFDB record: {record_base}")
-            afib_intervals = parse_afib_and_normal_intervals(annotation, len(signal))
+            print(f"Processing {data_used} record: {record_base}")
+            afib_intervals = parse_afib_and_normal_intervals(annotation, len(signal), data_used)
         else:
             raise ValueError(f"Unknown dataset type: {data_used}")
         
@@ -190,7 +197,7 @@ def create_dataset_from_paths(record_paths, preprocess, data_used='afdb'):
         ratio = preprocess.target_fs / preprocess.fs
         if data_used == 'afdb':
             afib_intervals_ds = extractor.convert_intervals_afdb(afib_intervals, ratio)
-        elif data_used == 'ltafdb':
+        elif (data_used == 'ltafdb' or data_used == 'mitdb'):
             afib_intervals_ds = extractor.convert_intervals_ltafdb(afib_intervals, ratio)
         else:
             raise ValueError(f"Unknown dataset type: {data_used}")
@@ -199,7 +206,7 @@ def create_dataset_from_paths(record_paths, preprocess, data_used='afdb'):
             segments, labels = extractor.extract_segments_afdb(
                 processed_signal, afib_intervals_ds, preprocess.target_fs
             )
-        elif data_used == 'ltafdb':
+        elif (data_used == 'ltafdb' or data_used == 'mitdb'):
             segments, labels = extractor.extract_segments_ltafdb(
                 processed_signal, afib_intervals_ds, preprocess.target_fs
             )

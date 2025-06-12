@@ -32,7 +32,11 @@ def get_model_path(config, base_dir="model_files"):
 
 def prepare_dataloaders(data_dir, fs, batch_size, seed, data_used):
     paths = [os.path.join(data_dir, f[:-4]) for f in os.listdir(data_dir) if f.endswith('.atr')]
+    
+    # using different seed for mitdb, because in test dataset we were not getting any AFIB samples
     np.random.seed(seed)
+    if data_used == 'mitdb':
+        np.random.seed(50)
     np.random.shuffle(paths)
 
     train_val_paths, test_paths = train_test_split(paths, test_size=0.2, random_state=seed)
@@ -190,8 +194,8 @@ if __name__ == "__main__":
                         default="resnet50_1d",
                         choices=["resnet18_1d", "resnet34_1d", "resnet50_1d", "resnet152_1d"],
                         help="Model architecture to use")
-    parser.add_argument("--data_used", type=str, default="afdb", choices=["afdb", "ltafdb"],
-                        help="Dataset type to use (afdb or ltafdb)")
+    parser.add_argument("--data_used", type=str, default="afdb", choices=["afdb", "ltafdb", "mitdb"],
+                        help="Dataset type to use (afdb, ltafdb or mitdb)")
     parser.add_argument("--fs", type=int, default=250, help="Original sampling frequency")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate")
